@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gaze Blur</title>
+<style>
+  :root { --fg:#eee; --dim:#888; --accent:#7CFFB2; --warn:#FF6B6B; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width:100%; height:100%; background:#000; color:var(--fg);
+    font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace; overflow:hidden; }
+
+  #stage { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  #img { max-width:100%; max-height:100%; object-fit:contain; display:none;
+    will-change: filter, transform; }
+  body.fit-cover #img { width:100%; height:100%; max-width:none; max-height:none; object-fit:cover; }
+
+  #drop { position:fixed; inset:0; display:flex; flex-direction:column; gap:14px;
+    align-items:center; justify-content:center; text-align:center; cursor:pointer; }
+  #drop .box { border:1px dashed #555; padding:48px 64px; border-radius:6px; }
+  #drop.over .box { border-color:var(--accent); color:var(--accent); }
+  #drop small { color:var(--dim); }
+
+  #hud { position:fixed; top:16px; right:16px; width:260px; background:rgba(0,0,0,.72);
+    border:1px solid #333; border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:10px;
+    backdrop-filter: blur(6px); z-index:10; }
+  #hud.hidden { display:none; }
+  #cam { width:100%; aspect-ratio:4/3; object-fit:cover; transform:scaleX(-1); border-radius:4px; background:#111; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .row label { color:var(--dim); }
+  input[type=range] { width:120px; accent-color: var(--accent); }
+  #status { font-weight:bold; }
+  #status.on { color:var(--accent); } #status.off { color:var(--warn); }
+  .bar { height:4px; background:#222; border-radius:2px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--accent); }
+  .keys { color:var(--dim); font-size:11px; line-height:1.6; }
+  button { background:#1a1a1a; color:var(--fg); border:1px solid #444; border-radius:4px; padding:6px 8px;
+    font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  .btns { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  body.fs.hud-off { cursor:none; }
+</style>
+</head>
+<body>
+<div id="stage"><img id="img" alt=""></div>
+
+<div id="drop">
+  <div class="box">이미지를 끌어다 놓거나 클릭해서 선택</div>
+  <small>카메라 권한을 허용해야 작동해</small>
+</div>
+<input id="file" type="file" accept="image/*" hidden>
+
+<div id="hud">
+  <video id="cam" playsinline muted></video>
+  <div class="row"><span>시선</span><span id="status" class="off">로딩 중…</span></div>
+  <div class="row"><label>블러</label><span id="blurVal">0px</span></div>
+  <div class="bar"><i id="blurBar"></i></div>
+
+  <div class="row"><label>최대 블러</label><input id="maxBlur" type="range" min="5" max="120" value="60"></div>
+  <div class="row"><label>블러 속도(초)</label><input id="ramp" type="range" min="1" max="60" value="10"></div>
+  <div class="row"><label>복구 속도(초)</label><input id="recover" type="range" min="0.5" max="30" step="0.5" value="3"></div>
+  <div class="row"><label>민감도</label><input id="sens" type="range" min="1" max="10" value="5"></div>
+  <div class="row"><label>곡선</label>
+    <select id="curve" style="background:#1a1a1a;color:#eee;border:1px solid #444;font:inherit">
+      <option value="ease">ease-in</option><option value="linear">linear</option>
+    </select></div>
+
+  <div class="btns">
+    <button id="btnCal">정면 보정 (C)</button>
+    <button id="btnFs">전체화면 (F)</button>
+    <button id="btnNew">이미지 변경 (O)</button>
+    <button id="btnFit">채우기 (V)</button>
+  </div>
+  <div class="keys">H 패널 숨기기 · R 블러 리셋 · F 전체화면<br>
+  C: 작품 정면에서 화면 중앙을 보면서 누르면 그 자세를 기준으로 잡음</div>
+</div>
+
+<div id="err" style="display:none;position:fixed;left:16px;bottom:16px;right:16px;max-width:720px;
+  background:#2a0d0d;border:1px solid #FF6B6B;color:#ffd6d6;padding:12px 14px;border-radius:6px;
+  white-space:pre-wrap;z-index:99;font-size:12px"></div>
+<script>
+  // classic script: catches errors even if the module below fails to load
+  window.showErr = (msg) => {
+    const el = document.getElementById("err");
+    el.style.display = "block";
+    el.textContent += (el.textContent ? "\n\n" : "") + "⚠ " + msg;
+    const s = document.getElementById("status"); if (s) s.textContent = "에러 (아래 확인)";
+  };
+  window.addEventListener("error", e => showErr((e.message || "스크립트 에러") + (e.filename ? `\n${e.filename}:${e.lineno}` : "")));
+  window.addEventListener("unhandledrejection", e => showErr(String(e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+  setTimeout(() => { if (!window.__moduleLoaded) showErr("메인 스크립트가 로드되지 않았어. 인터넷 연결을 확인하거나, Claude 앱 미리보기 말고 Chrome에서 파일을 직접 열어줘."); }, 8000);
+</script>
+
+<script type="module">
+window.__moduleLoaded = true;
+const $ = id => document.getElementById(id);
+let FaceLandmarker, FilesetResolver;
+const img = $("img"), drop = $("drop"), file = $("file"), hud = $("hud"), cam = $("cam");
+
+// ---------- image loading ----------
+function loadImage(f) {
+  if (!f || !f.type.startsWith("image/")) return;
+  const url = URL.createObjectURL(f);
+  img.onload = () => { img.style.display = "block"; drop.style.display = "none"; };
+  img.src = url;
+}
+drop.onclick = () => file.click();
+file.onchange = e => loadImage(e.target.files[0]);
+["dragenter","dragover"].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+window.addEventListener("drop", e => loadImage(e.dataTransfer.files[0]));
+window.addEventListener("paste", e => {
+  const it = [...e.clipboardData.items].find(i => i.type.startsWith("image/"));
+  if (it) loadImage(it.getAsFile());
+});
+
+// ---------- controls ----------
+function toggleFs() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+}
+document.addEventListener("fullscreenchange", () => document.body.classList.toggle("fs", !!document.fullscreenElement));
+function toggleHud() {
+  hud.classList.toggle("hidden");
+  document.body.classList.toggle("hud-off", hud.classList.contains("hidden"));
+}
+let blur = 0;              // 0..1
+let baseline = { yaw:0, pitch:0, gx:0, gy:0 };
+let calibrateNext = false;
+
+$("btnFs").onclick = toggleFs;
+$("btnNew").onclick = () => file.click();
+$("btnCal").onclick = () => calibrateNext = true;
+$("btnFit").onclick = () => document.body.classList.toggle("fit-cover");
+window.addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+  if (k === "f") toggleFs();
+  else if (k === "h") toggleHud();
+  else if (k === "c") calibrateNext = true;
+  else if (k === "r") blur = 0;
+  else if (k === "o") file.click();
+  else if (k === "v") document.body.classList.toggle("fit-cover");
+});
+
+// ---------- camera + face model ----------
+const statusEl = $("status");
+let landmarker;
+async function init() {
+  // 1) camera
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showErr("이 환경에서는 카메라 API를 쓸 수 없어. (미리보기 창/샌드박스이거나 http 주소일 가능성)\nChrome에서 파일을 더블클릭해서 직접 열어줘.");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }, audio: false });
+    cam.srcObject = stream;
+    await cam.play();
+  } catch (err) {
+    const why = {
+      NotAllowedError: "카메라 권한이 거부됐어. 주소창 왼쪽 아이콘 → 카메라 '허용'으로 바꾸고 새로고침. (Mac이면 시스템 설정 → 개인정보 보호 → 카메라에서 Chrome도 켜야 해)",
+      NotFoundError: "카메라를 찾을 수 없어. 웹캠 연결 확인해줘.",
+      NotReadableError: "다른 앱(Zoom, FaceTime 등)이 카메라를 쓰고 있어. 끄고 새로고침.",
+      OverconstrainedError: "카메라 해상도 설정이 안 맞아."
+    }[err.name] || "";
+    showErr(`카메라 에러: ${err.name} — ${err.message}\n${why}`);
+    return;
+  }
+  // 2) model
+  statusEl.textContent = "모델 로딩 중…";
+  let fileset;
+  try {
+    ({ FaceLandmarker, FilesetResolver } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14"));
+    fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  } catch (err) {
+    showErr(`MediaPipe 로드 실패 (인터넷/방화벽 확인): ${err.message || err}`);
+    return;
+  }
+  const opts = delegate => ({
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate
+    },
+    runningMode: "VIDEO",
+    numFaces: 4,
+    outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true
+  });
+  try { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("GPU")); }
+  catch (e1) {
+    try { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("CPU")); }
+    catch (e2) { showErr(`얼굴 인식 모델 생성 실패: ${e2.message || e2}`); return; }
+  }
+  statusEl.textContent = "준비 완료";
+  requestAnimationFrame(loop);
+}
+
+// ---------- gaze estimation ----------
+const bs = (cats, name) => (cats.find(c => c.categoryName === name) || { score: 0 }).score;
+
+function readFace(i, res) {
+  const m = res.facialTransformationMatrixes[i].data;   // column-major 4x4
+  const R20 = m[2], R21 = m[6], R22 = m[10];
+  const yaw   = Math.asin(Math.max(-1, Math.min(1, -R20))) * 180 / Math.PI;
+  const pitch = Math.atan2(R21, R22) * 180 / Math.PI;
+  const c = res.faceBlendshapes[i].categories;
+  // horizontal eye gaze: + = looking to subject's left
+  const gx = ((bs(c,"eyeLookOutLeft") - bs(c,"eyeLookInLeft")) + (bs(c,"eyeLookInRight") - bs(c,"eyeLookOutRight"))) / 2;
+  const gy = ((bs(c,"eyeLookUpLeft") + bs(c,"eyeLookUpRight")) - (bs(c,"eyeLookDownLeft") + bs(c,"eyeLookDownRight"))) / 2;
+  const blink = (bs(c,"eyeBlinkLeft") + bs(c,"eyeBlinkRight")) / 2;
+  return { yaw, pitch, gx, gy, blink };
+}
+
+function isLooking(f) {
+  const s = +$("sens").value;                 // 1 strict .. 10 loose
+  const headTol = 8 + s * 3;                  // degrees
+  const eyeTol  = 0.15 + s * 0.05;
+  const dy = Math.abs(f.yaw - baseline.yaw), dp = Math.abs(f.pitch - baseline.pitch);
+  // head turn and eye turn partly cancel out (looking sideways with head, eyes back to screen)
+  const effYaw = Math.abs((f.yaw - baseline.yaw) + (f.gx - baseline.gx) * 30);
+  const eyeOff = Math.hypot(f.gx - baseline.gx, f.gy - baseline.gy);
+  return f.blink < 0.5 && dp < headTol && (effYaw < headTol) && dy < headTol * 2.2 && eyeOff < eyeTol * 2;
+}
+
+// ---------- main loop ----------
+let lastT = performance.now(), lastVideoT = -1;
+let attention = 0;   // smoothed 0..1
+
+function loop(t) {
+  const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+  let lookingNow = false, faces = 0;
+
+  if (cam.readyState >= 2 && cam.currentTime !== lastVideoT) {
+    lastVideoT = cam.currentTime;
+    let res = null;
+    loop.ts = Math.max((loop.ts || 0) + 1, Math.round(performance.now()));  // must strictly increase
+    try { res = landmarker.detectForVideo(cam, loop.ts); }
+    catch (e) { if (!loop.warned) { showErr(`인식 에러: ${e.message || e}`); loop.warned = true; } }
+    const n = Math.min(res?.faceBlendshapes?.length || 0, res?.facialTransformationMatrixes?.length || 0);
+    faces = n;
+    const reads = [];
+    for (let i = 0; i < n; i++) { try { reads.push(readFace(i, res)); } catch {} }
+    if (calibrateNext && reads.length) {
+      const f = reads[0];
+      baseline = { yaw: f.yaw, pitch: f.pitch, gx: f.gx, gy: f.gy };
+      calibrateNext = false;
+    }
+    lookingNow = reads.some(isLooking);   // any viewer looking counts
+    loop.lastLooking = lookingNow; loop.lastFaces = faces;
+  } else {
+    lookingNow = !!loop.lastLooking; faces = loop.lastFaces || 0;
+  }
+
+  // smooth to avoid flicker
+  attention += ((lookingNow ? 1 : 0) - attention) * Math.min(1, dt * 8);
+  const looking = attention > 0.5;
+
+  const ramp = +$("ramp").value, recover = +$("recover").value;
+  blur += looking ? dt / ramp : -dt / recover;
+  blur = Math.max(0, Math.min(1, blur));
+
+  const curved = $("curve").value === "ease" ? blur * blur : blur;
+  const px = curved * +$("maxBlur").value;
+  img.style.filter = px > 0.05 ? `blur(${px.toFixed(2)}px)` : "none";
+  img.style.transform = `scale(${1 + curved * 0.04})`;   // hide soft edges
+
+  statusEl.textContent = faces === 0 ? "얼굴 없음" : looking ? `보는 중 (${faces}명)` : `안 보는 중 (${faces}명)`;
+  statusEl.className = looking ? "on" : "off";
+  $("blurVal").textContent = px.toFixed(1) + "px";
+  $("blurBar").style.width = (blur * 100) + "%";
+
+  requestAnimationFrame(loop);
+}
+
+init();
+</script>
+</body>
+</html>

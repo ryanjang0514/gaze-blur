@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,34 +45,34 @@
 <div id="stage"><img id="img" alt=""></div>
 
 <div id="drop">
-  <div class="box">이미지를 끌어다 놓거나 클릭해서 선택</div>
-  <small>카메라 권한을 허용해야 작동해</small>
+  <div class="box">Drop an image here, or click to choose</div>
+  <small>Allow camera access for this to work</small>
 </div>
 <input id="file" type="file" accept="image/*" hidden>
 
 <div id="hud">
   <video id="cam" playsinline muted></video>
-  <div class="row"><span>시선</span><span id="status" class="off">로딩 중…</span></div>
-  <div class="row"><label>블러</label><span id="blurVal">0px</span></div>
+  <div class="row"><span>Gaze</span><span id="status" class="off">Loading…</span></div>
+  <div class="row"><label>Blur</label><span id="blurVal">0px</span></div>
   <div class="bar"><i id="blurBar"></i></div>
 
-  <div class="row"><label>최대 블러</label><input id="maxBlur" type="range" min="5" max="120" value="60"></div>
-  <div class="row"><label>블러 속도(초)</label><input id="ramp" type="range" min="1" max="60" value="10"></div>
-  <div class="row"><label>복구 속도(초)</label><input id="recover" type="range" min="0.5" max="30" step="0.5" value="3"></div>
-  <div class="row"><label>민감도</label><input id="sens" type="range" min="1" max="10" value="5"></div>
-  <div class="row"><label>곡선</label>
+  <div class="row"><label>Max blur</label><input id="maxBlur" type="range" min="5" max="150" value="80"></div>
+  <div class="row"><label>Blur time (s)</label><input id="ramp" type="range" min="0.1" max="10" step="0.1" value="0.4"></div>
+  <div class="row"><label>Recover time (s)</label><input id="recover" type="range" min="0.05" max="5" step="0.05" value="0.25"></div>
+  <div class="row"><label>Sensitivity</label><input id="sens" type="range" min="1" max="10" value="5"></div>
+  <div class="row"><label>Curve</label>
     <select id="curve" style="background:#1a1a1a;color:#eee;border:1px solid #444;font:inherit">
-      <option value="ease">ease-in</option><option value="linear">linear</option>
+      <option value="out">Instant (ease-out)</option><option value="linear">linear</option><option value="ease">ease-in</option>
     </select></div>
 
   <div class="btns">
-    <button id="btnCal">정면 보정 (C)</button>
-    <button id="btnFs">전체화면 (F)</button>
-    <button id="btnNew">이미지 변경 (O)</button>
-    <button id="btnFit">채우기 (V)</button>
+    <button id="btnCal">Calibrate (C)</button>
+    <button id="btnFs">Fullscreen (F)</button>
+    <button id="btnNew">New image (O)</button>
+    <button id="btnFit">Fill (V)</button>
   </div>
-  <div class="keys">H 패널 숨기기 · R 블러 리셋 · F 전체화면<br>
-  C: 작품 정면에서 화면 중앙을 보면서 누르면 그 자세를 기준으로 잡음</div>
+  <div class="keys">H hide panel · R reset blur · F fullscreen<br>
+  C: stand where the viewer will be, look at the center of the screen, and press C to set that as "looking"</div>
 </div>
 
 <div id="err" style="display:none;position:fixed;left:16px;bottom:16px;right:16px;max-width:720px;
@@ -84,11 +84,11 @@
     const el = document.getElementById("err");
     el.style.display = "block";
     el.textContent += (el.textContent ? "\n\n" : "") + "⚠ " + msg;
-    const s = document.getElementById("status"); if (s) s.textContent = "에러 (아래 확인)";
+    const s = document.getElementById("status"); if (s) s.textContent = "Error (see below)";
   };
-  window.addEventListener("error", e => showErr((e.message || "스크립트 에러") + (e.filename ? `\n${e.filename}:${e.lineno}` : "")));
+  window.addEventListener("error", e => showErr((e.message || "Script error") + (e.filename ? `\n${e.filename}:${e.lineno}` : "")));
   window.addEventListener("unhandledrejection", e => showErr(String(e.reason && (e.reason.stack || e.reason.message) || e.reason)));
-  setTimeout(() => { if (!window.__moduleLoaded) showErr("메인 스크립트가 로드되지 않았어. 인터넷 연결을 확인하거나, Claude 앱 미리보기 말고 Chrome에서 파일을 직접 열어줘."); }, 8000);
+  setTimeout(() => { if (!window.__moduleLoaded) showErr("Main script failed to load. Check your internet connection, or open the page directly in Chrome."); }, 8000);
 </script>
 
 <script type="module">
@@ -148,7 +148,7 @@ let landmarker;
 async function init() {
   // 1) camera
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showErr("이 환경에서는 카메라 API를 쓸 수 없어. (미리보기 창/샌드박스이거나 http 주소일 가능성)\nChrome에서 파일을 더블클릭해서 직접 열어줘.");
+    showErr("Camera API is not available here (sandboxed preview or non-https page).\nOpen the page directly in Chrome.");
     return;
   }
   try {
@@ -157,22 +157,22 @@ async function init() {
     await cam.play();
   } catch (err) {
     const why = {
-      NotAllowedError: "카메라 권한이 거부됐어. 주소창 왼쪽 아이콘 → 카메라 '허용'으로 바꾸고 새로고침. (Mac이면 시스템 설정 → 개인정보 보호 → 카메라에서 Chrome도 켜야 해)",
-      NotFoundError: "카메라를 찾을 수 없어. 웹캠 연결 확인해줘.",
-      NotReadableError: "다른 앱(Zoom, FaceTime 등)이 카메라를 쓰고 있어. 끄고 새로고침.",
-      OverconstrainedError: "카메라 해상도 설정이 안 맞아."
+      NotAllowedError: "Camera permission denied. Click the icon left of the address bar → Camera → Allow, then reload. (On Mac also enable Chrome in System Settings → Privacy & Security → Camera.)",
+      NotFoundError: "No camera found. Check your webcam connection.",
+      NotReadableError: "Another app (Zoom, FaceTime, etc.) is using the camera. Close it and reload.",
+      OverconstrainedError: "Camera resolution constraints could not be met."
     }[err.name] || "";
-    showErr(`카메라 에러: ${err.name} — ${err.message}\n${why}`);
+    showErr(`Camera error: ${err.name} — ${err.message}\n${why}`);
     return;
   }
   // 2) model
-  statusEl.textContent = "모델 로딩 중…";
+  statusEl.textContent = "Loading model…";
   let fileset;
   try {
     ({ FaceLandmarker, FilesetResolver } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14"));
     fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
   } catch (err) {
-    showErr(`MediaPipe 로드 실패 (인터넷/방화벽 확인): ${err.message || err}`);
+    showErr(`Failed to load MediaPipe (check internet/firewall): ${err.message || err}`);
     return;
   }
   const opts = delegate => ({
@@ -188,9 +188,9 @@ async function init() {
   try { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("GPU")); }
   catch (e1) {
     try { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("CPU")); }
-    catch (e2) { showErr(`얼굴 인식 모델 생성 실패: ${e2.message || e2}`); return; }
+    catch (e2) { showErr(`Failed to create face model: ${e2.message || e2}`); return; }
   }
-  statusEl.textContent = "준비 완료";
+  statusEl.textContent = "Ready";
   requestAnimationFrame(loop);
 }
 
@@ -234,7 +234,7 @@ function loop(t) {
     let res = null;
     loop.ts = Math.max((loop.ts || 0) + 1, Math.round(performance.now()));  // must strictly increase
     try { res = landmarker.detectForVideo(cam, loop.ts); }
-    catch (e) { if (!loop.warned) { showErr(`인식 에러: ${e.message || e}`); loop.warned = true; } }
+    catch (e) { if (!loop.warned) { showErr(`Detection error: ${e.message || e}`); loop.warned = true; } }
     const n = Math.min(res?.faceBlendshapes?.length || 0, res?.facialTransformationMatrixes?.length || 0);
     faces = n;
     const reads = [];
@@ -251,19 +251,21 @@ function loop(t) {
   }
 
   // smooth to avoid flicker
-  attention += ((lookingNow ? 1 : 0) - attention) * Math.min(1, dt * 8);
+  // fast response: jump on when looking, drop quickly when not
+  attention += ((lookingNow ? 1 : 0) - attention) * Math.min(1, dt * (lookingNow ? 25 : 30));
   const looking = attention > 0.5;
 
   const ramp = +$("ramp").value, recover = +$("recover").value;
   blur += looking ? dt / ramp : -dt / recover;
   blur = Math.max(0, Math.min(1, blur));
 
-  const curved = $("curve").value === "ease" ? blur * blur : blur;
+  const cv = $("curve").value;
+  const curved = cv === "ease" ? blur * blur : cv === "out" ? 1 - (1 - blur) * (1 - blur) : blur;
   const px = curved * +$("maxBlur").value;
   img.style.filter = px > 0.05 ? `blur(${px.toFixed(2)}px)` : "none";
   img.style.transform = `scale(${1 + curved * 0.04})`;   // hide soft edges
 
-  statusEl.textContent = faces === 0 ? "얼굴 없음" : looking ? `보는 중 (${faces}명)` : `안 보는 중 (${faces}명)`;
+  statusEl.textContent = faces === 0 ? "No face" : looking ? `Looking (${faces})` : `Not looking (${faces})`;
   statusEl.className = looking ? "on" : "off";
   $("blurVal").textContent = px.toFixed(1) + "px";
   $("blurBar").style.width = (blur * 100) + "%";
